@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="hi" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Assistant with Iron Man</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+          "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.149/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.149/examples/jsm/"
+          }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Roboto Mono', monospace;
+            background-color: #0b0f19;
+            color: #e2e8f0;
+            overflow: hidden;
+            touch-action: none; /* Prevent scrolling issues on touch devices */
+        }
+        .container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            padding: 1rem;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #chat-interface {
+            position: absolute;
+            bottom: 5%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 500px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 10;
+        }
+        #message-box {
+            background-color: rgba(26, 32, 44, 0.8);
+            border-radius: 0.75rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            text-align: center;
+            min-height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #e2e8f0;
+            backdrop-filter: blur(5px);
+            transition: opacity 0.3s ease;
+        }
+        #input-area {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        #voice-btn {
+            background-color: #3b82f6;
+            color: white;
+            padding: 1rem;
+            border-radius: 9999px;
+            transition: background-color 0.3s ease, transform 0.2s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        #voice-btn:hover {
+            background-color: #2563eb;
+            transform: scale(1.1);
+        }
+        #voice-btn.listening {
+            background-color: #ef4444;
+            animation: pulse-button 1.5s infinite;
+        }
+        @keyframes pulse-button {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200">
+    <div class="container" id="container">
+        <!-- 3D Scene is rendered here -->
+    </div>
+
+    <div id="chat-interface">
+        <div id="message-box" class="hidden"></div>
+        <div id="input-area">
+            <button id="voice-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-8 h-8">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m6-4.5v-3.75m-6 0a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Scene Setup ---
+        let scene, camera, renderer, controls;
+        let ironManGroup;
+        const container = document.getElementById('container');
+        const voiceBtn = document.getElementById('voice-btn');
+        const messageBox = document.getElementById('message-box');
+        
+        let isListening = false;
+        let recognition;
+        
+        // Replace with your Vercel deployment URL
+        const BACKEND_URL = "https://your-vercel-domain.vercel.app/ask-ai";
+
+        const websites = {
+            'गूगल': 'https://www.google.com',
+            'यूट्यूब': 'https://www.youtube.com',
+            'गिटहब': 'https://www.github.com',
+            'फेसबुक': 'https://www.facebook.com'
+        };
+
+        const init = () => {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0b0f19);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            container.appendChild(renderer.domElement);
+
+            // Create lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+
+            const pointLight = new THREE.PointLight(0xffffff, 1);
+            pointLight.position.set(5, 5, 5);
+            scene.add(pointLight);
+
+            // Create Iron Man Helmet
+            ironManGroup = new THREE.Group();
+            
+            const headGeometry = new THREE.SphereGeometry(1, 32, 16);
+            const headMaterial = new THREE.MeshPhongMaterial({ color: 0xaa2222, flatShading: true });
+            const head = new THREE.Mesh(headGeometry, headMaterial);
+            ironManGroup.add(head);
+
+            // Helmet face plate
+            const faceGeometry = new THREE.BoxGeometry(1.2, 0.8, 0.2);
+            const faceMaterial = new THREE.MeshPhongMaterial({ color: 0xcccccc, flatShading: true });
+            const face = new THREE.Mesh(faceGeometry, faceMaterial);
+            face.position.z = 0.9;
+            ironManGroup.add(face);
+
+            // Eye slits
+            const eyeGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.8, 32);
+            const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+            const eyeLeft = new THREE.Mesh(eyeGeometry, eyeMaterial);
+            eyeLeft.rotation.z = Math.PI / 2;
+            eyeLeft.position.set(-0.3, 0.3, 1);
+            ironManGroup.add(eyeLeft);
+
+            const eyeRight = new THREE.Mesh(eyeGeometry, eyeMaterial);
+            eyeRight.rotation.z = Math.PI / 2;
+            eyeRight.position.set(0.3, 0.3, 1);
+            ironManGroup.add(eyeRight);
+
+            scene.add(ironManGroup);
+
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.screenSpacePanning = false;
+            controls.minDistance = 3;
+            controls.maxDistance = 10;
+        };
+
+        // --- Animation Loop ---
+        const animate = () => {
+            requestAnimationFrame(animate);
+            controls.update();
+            ironManGroup.rotation.y += 0.005;
+            renderer.render(scene, camera);
+        };
+
+        const onResize = () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        };
+
+        window.addEventListener('resize', onResize);
+        window.onload = () => {
+            init();
+            animate();
+        };
+
+        // --- Text-to-Speech ---
+        const speak = (text) => {
+            const synth = window.speechSynthesis;
+            if (synth.speaking) {
+                console.error('speechSynthesis.speaking');
+                return;
+            }
+            if (text !== '') {
+                const utterThis = new SpeechSynthesisUtterance(text);
+                utterThis.lang = 'hi-IN';
+                synth.speak(utterThis);
+
+                // Simple talking animation
+                const talkInterval = setInterval(() => {
+                    if (!synth.speaking) {
+                        clearInterval(talkInterval);
+                        ironManGroup.rotation.x = 0;
+                        return;
+                    }
+                    ironManGroup.rotation.x = Math.sin(Date.now() * 0.005) * 0.1;
+                }, 50);
+            }
+        };
+
+        // --- Voice Recognition & Command Handling ---
+        if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+            recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'hi-IN';
+
+            recognition.onstart = () => {
+                isListening = true;
+                voiceBtn.classList.add('listening');
+                showMessage("मैं सुन रहा हूँ...");
+            };
+
+            recognition.onend = () => {
+                isListening = false;
+                voiceBtn.classList.remove('listening');
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                showMessage(`आप: ${transcript}`);
+                handleCommand(transcript);
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                showMessage("क्षमा करें, आवाज़ पहचानने में कोई समस्या हुई।", true);
+                speak("क्षमा करें, आवाज़ पहचानने में कोई समस्या हुई।");
+            };
+
+            voiceBtn.addEventListener('click', () => {
+                if (isListening) {
+                    recognition.stop();
+                } else {
+                    recognition.start();
+                }
+            });
+        } else {
+            speak("माफ़ करना, तुम्हारा ब्राउज़र वॉयस कमांड का समर्थन नहीं करता।");
+            voiceBtn.style.display = 'none';
+        }
+
+        const handleCommand = async (command) => {
+            const lowerCaseCommand = command.toLowerCase();
+            let openWebsite = false;
+            let urlToOpen = '';
+
+            for (const siteName in websites) {
+                if (lowerCaseCommand.includes(siteName) && (lowerCaseCommand.includes('खोल') || lowerCaseCommand.includes('ओपन करो'))) {
+                    urlToOpen = websites[siteName];
+                    openWebsite = true;
+                    break;
+                }
+            }
+
+            if (openWebsite) {
+                const response = `मैं ${lowerCaseCommand.split(' ')[0]} खोल रहा हूँ।`;
+                showMessage(`जवाब: ${response}`);
+                speak(response);
+                setTimeout(() => {
+                    window.open(urlToOpen, '_blank');
+                }, 1500);
+            } else {
+                showMessage("जवाब: सोच रहा हूँ...");
+                const response = await sendToBackend(command);
+                showMessage(`जवाब: ${response}`);
+                speak(response);
+            }
+        };
+
+        const sendToBackend = async (message) => {
+            try {
+                const response = await fetch(BACKEND_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message })
+                });
+                const data = await response.json();
+                if (data.text) {
+                    return data.text;
+                } else {
+                    return "क्षमा करें, मैं एआई से जवाब नहीं पा सका।";
+                }
+            } catch (error) {
+                console.error("Backend error:", error);
+                return "सर्वर में कोई समस्या है।";
+            }
+        };
+
+        const showMessage = (message, isError = false) => {
+            messageBox.textContent = message;
+            messageBox.classList.remove('hidden');
+            if (isError) {
+                messageBox.style.color = '#ef4444';
+            } else {
+                messageBox.style.color = '#e2e8f0';
+            }
+        };
+    </script>
+</body>
+</html>
